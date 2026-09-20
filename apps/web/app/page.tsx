@@ -51,7 +51,7 @@ export default function Home() {
             </div>
 
             <span className="text-xl font-bold">
-              Learn<span className="text-blue-500">Hub</span>
+              SKILL<span className="text-blue-500">EVO</span>
             </span>
           </Link>
 
@@ -171,7 +171,7 @@ export default function Home() {
         <div className="max-w-2xl">
 
           <p className="text-sm font-semibold uppercase tracking-wider text-blue-500">
-            Why LearnHub?
+            Why SKILL EVO?
           </p>
 
           <h2 className="mt-3 text-3xl font-bold md:text-4xl">
@@ -236,7 +236,7 @@ export default function Home() {
       <footer className="border-t border-slate-800">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
 
-          <p>© 2026 LearnHub. All rights reserved.</p>
+          <p>© 2026 SKILL EVO. All rights reserved.</p>
 
           <div className="flex gap-6">
             <Link
