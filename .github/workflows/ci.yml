@@ -36,8 +36,13 @@ jobs:
 
       - name: Type check
         run: pnpm --filter web check-types
-
+      
       - name: Build
         run: pnpm --filter web build
-cat .github/workflows/ci.yml
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+        
+
 
