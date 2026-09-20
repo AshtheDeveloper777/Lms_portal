@@ -26,14 +26,12 @@ type Progress = {
 export default function LearnPage() {
   const params = useParams();
   const router = useRouter();
-
   const courseId = params.id as string;
 
   const [course, setCourse] = useState<Course | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [progress, setProgress] = useState<Progress[]>([]);
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
-
   const [loading, setLoading] = useState(true);
   const [isEnrolled, setIsEnrolled] = useState(false);
   const [markingComplete, setMarkingComplete] = useState(false);
@@ -105,20 +103,27 @@ export default function LearnPage() {
 
         // Select first lesson
         if (lessonsData && lessonsData.length > 0) {
-        setSelectedLesson(lessonsData[0] ?? null);        }
+          setSelectedLesson(lessonsData[0] ?? null);
+        }
       }
 
-      // Fetch student progress
+      // Fetch ONLY progress for lessons in this course
       const { data: progressData, error: progressError } =
         await supabase
           .from("lesson_progress")
-          .select("lesson_id, completed")
-          .eq("student_id", user.id);
+          .select("lesson_id, completed, lessons!inner(course_id)")
+          .eq("student_id", user.id)
+          .eq("lessons.course_id", courseId);
 
       if (progressError) {
         console.error("PROGRESS ERROR:", progressError);
       } else {
-        setProgress(progressData || []);
+        setProgress(
+          (progressData ?? []).map((item) => ({
+            lesson_id: item.lesson_id,
+            completed: item.completed,
+          }))
+        );
       }
 
       setLoading(false);
