@@ -39,5 +39,5 @@ jobs:
 
       - name: Build
         run: pnpm --filter web build
-cat .github/workflows/ci.yml
+
 
