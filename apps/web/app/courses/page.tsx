@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { BookOpen, Clock, Star } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useRealtimeInvalidate } from "@/hooks/use-realtime-invalidate";
 
 type Course = {
   id: string;
@@ -15,43 +17,48 @@ type Course = {
 };
 
 async function fetchCourses(): Promise<Course[]> {
-  console.log("COURSES: query started");
-
   const { data, error } = await supabase
     .from("courses")
-    .select(
-      "id, title, description, category, thumbnail_url, published, created_at"
-    )
+    .select("id, title, description, category, thumbnail_url, published, created_at")
     .eq("published", true)
     .order("created_at", { ascending: false });
 
-  console.log("COURSES: query finished");
-  console.log("COURSES DATA:", data);
-  console.log("COURSES ERROR MESSAGE:", error?.message);
-  console.log("COURSES ERROR DETAILS:", error);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
+  if (error) throw new Error(error.message);
   return data ?? [];
 }
 
 export default function CoursesPage() {
-  const {
-    data: courses = [],
-    isLoading,
-    error,
-  } = useQuery({
+  const { data: courses = [], isLoading, error } = useQuery({
     queryKey: ["published-courses"],
     queryFn: fetchCourses,
   });
 
+  // Real-time: invalidate when courses table changes
+  useRealtimeInvalidate("courses", [["published-courses"]]);
+
   if (isLoading) {
     return (
-      <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-        <div className="mx-auto max-w-7xl">
-          <p className="text-slate-400">Loading courses...</p>
+      <main className="lms-page" style={{ paddingTop: 48, paddingBottom: 48 }}>
+        <div className="lms-container">
+          <div className="lms-page-header">
+            <div className="lms-skeleton" style={{ height: 12, width: 140, marginBottom: 12 }} />
+            <div className="lms-skeleton" style={{ height: 40, width: 320, marginBottom: 10 }} />
+            <div className="lms-skeleton" style={{ height: 16, width: 480 }} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 24 }}>
+            {[1,2,3,4,5,6].map(i => (
+              <div key={i} className="lms-card" style={{ overflow: "hidden" }}>
+                <div className="lms-skeleton" style={{ height: 190 }} />
+                <div style={{ padding: 22 }}>
+                  <div className="lms-skeleton" style={{ height: 11, width: 80, marginBottom: 10 }} />
+                  <div className="lms-skeleton" style={{ height: 22, width: "85%", marginBottom: 8 }} />
+                  <div className="lms-skeleton" style={{ height: 14, width: "100%", marginBottom: 6 }} />
+                  <div className="lms-skeleton" style={{ height: 14, width: "75%", marginBottom: 20 }} />
+                  <div className="lms-skeleton" style={{ height: 38, width: 130, borderRadius: 10 }} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
     );
@@ -59,85 +66,94 @@ export default function CoursesPage() {
 
   if (error) {
     return (
-      <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-        <div className="mx-auto max-w-7xl">
-          <div className="rounded-lg border border-red-800 bg-red-950/30 p-4 text-red-400">
-            Failed to load courses.
-          </div>
+      <main className="lms-page" style={{ paddingTop: 48, paddingBottom: 48 }}>
+        <div className="lms-container">
+          <div className="lms-alert lms-alert--error">Failed to load courses. Please refresh the page.</div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-      <div className="mx-auto max-w-7xl">
+    <main className="lms-page" style={{ paddingTop: 48, paddingBottom: 80 }}>
+      <div className="lms-container">
         {/* Header */}
-        <div className="mb-10">
-          <p className="text-sm font-medium text-blue-400">
-            EXPLORE COURSES
-          </p>
-
-          <h1 className="mt-2 text-4xl font-bold">
-            Learn. Build. Grow.
-          </h1>
-
-          <p className="mt-3 max-w-2xl text-slate-400">
-            Explore practical courses designed to help you build
-            real-world technical skills.
+        <div className="lms-page-header">
+          <p className="lms-page-eyebrow">Explore Courses</p>
+          <h1 className="lms-page-title">Learn. Build. Grow.</h1>
+          <p className="lms-page-subtitle" style={{ maxWidth: 560 }}>
+            Explore practical courses designed to help you build real-world technical skills.
           </p>
         </div>
 
         {/* Courses */}
         {courses.length === 0 ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center">
-            <p className="text-slate-400">
-              No published courses available.
-            </p>
+          <div className="lms-card" style={{ padding: 64, textAlign: "center" }}>
+            <BookOpen size={40} style={{ color: "var(--text-muted)", margin: "0 auto 16px" }} />
+            <p style={{ color: "var(--text-muted)", fontSize: 15 }}>No published courses available yet. Check back soon!</p>
           </div>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 24 }}>
             {courses.map((course) => (
-              <div
-                key={course.id}
-                className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 transition hover:-translate-y-1 hover:border-slate-700"
-              >
+              <div key={course.id} className="lms-course-card">
                 {/* Thumbnail */}
                 {course.thumbnail_url ? (
                   <img
                     src={course.thumbnail_url}
                     alt={course.title}
-                    className="h-48 w-full object-cover"
+                    className="lms-course-thumbnail"
                   />
                 ) : (
-                  <div className="flex h-48 items-center justify-center bg-slate-800">
-                    <span className="text-slate-500">
-                      No thumbnail
-                    </span>
+                  <div className="lms-course-thumbnail-placeholder">
+                    <BookOpen size={32} />
                   </div>
                 )}
 
                 {/* Content */}
-                <div className="p-6">
+                <div className="lms-course-body">
                   {course.category && (
-                    <p className="text-sm font-medium text-blue-400">
+                    <span className="lms-badge lms-badge--accent" style={{ marginBottom: 10 }}>
                       {course.category}
-                    </p>
+                    </span>
                   )}
 
-                  <h2 className="mt-2 text-xl font-bold">
+                  <h2 style={{
+                    fontSize: 17,
+                    fontWeight: 700,
+                    color: "var(--text-primary)",
+                    marginBottom: 8,
+                    lineHeight: 1.3,
+                  }}>
                     {course.title}
                   </h2>
 
-                  <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-400">
+                  <p style={{
+                    fontSize: 13,
+                    color: "var(--text-muted)",
+                    lineHeight: 1.6,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                    flex: 1,
+                    marginBottom: 20,
+                  }}>
                     {course.description}
                   </p>
 
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                    <Clock size={12} style={{ color: "var(--text-muted)" }} />
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      Added {new Date(course.created_at).toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" })}
+                    </span>
+                  </div>
+
                   <Link
                     href={`/courses/${course.id}`}
-                    className="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold hover:bg-blue-700"
+                    className="lms-btn lms-btn--primary"
+                    style={{ width: "100%", justifyContent: "center" }}
                   >
-                    View Course →
+                    View Course ?
                   </Link>
                 </div>
               </div>

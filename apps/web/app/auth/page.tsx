@@ -1,62 +1,49 @@
-"use client";
+'use client';
 
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
-import { z } from "zod";
+import { FormEvent, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { GraduationCap, Eye, EyeOff } from 'lucide-react';
+import { z } from 'zod';
+import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/store/auth-store';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
 
-import { supabase } from "@/lib/supabase";
-import { useAuthStore } from "@/store/auth-store";
-
-const emailSchema = z
-  .string()
-  .trim()
-  .email("Please enter a valid email address.");
+const emailSchema = z.string().trim().email('Please enter a valid email address.');
 
 export default function AuthPage() {
   const router = useRouter();
-  const setRole = useAuthStore((state) => state.setRole);
+  const { setUser } = useAuthStore();
 
   const [isLogin, setIsLogin] = useState(true);
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-
     setLoading(true);
-    setError("");
-    setSuccess("");
-
-    // =========================
-    // EMAIL VALIDATION
-    // =========================
+    setError('');
+    setSuccess('');
 
     const emailResult = emailSchema.safeParse(email);
-
     if (!emailResult.success) {
-      setError("Please enter a valid email address.");
+      setError('Please enter a valid email address.');
       setLoading(false);
       return;
     }
 
-    const validatedEmail = emailResult.data;
-
     try {
-      // =========================
-      // LOGIN
-      // =========================
-
       if (isLogin) {
-        const { data, error: loginError } =
-          await supabase.auth.signInWithPassword({
-            email: validatedEmail,
-            password,
-          });
+        const { data, error: loginError } = await supabase.auth.signInWithPassword({
+          email: emailResult.data,
+          password,
+        });
 
         if (loginError) {
           setError(loginError.message);
@@ -65,76 +52,66 @@ export default function AuthPage() {
         }
 
         if (!data.user) {
-          setError("Login failed.");
+          setError('Login failed. Please check your credentials.');
           setLoading(false);
           return;
         }
 
-        // =========================
-        // GET USER ROLE
-        // =========================
+        let userRole: 'student' | 'instructor' = 'student';
+        let userFullName = data.user.user_metadata?.full_name || email.split('@')[0];
 
-        const { data: profile, error: profileError } =
-          await supabase
-            .from("profiles")
-            .select("role")
-            .eq("id", data.user.id)
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('role, full_name')
+            .eq('id', data.user.id)
             .maybeSingle();
 
-        if (profileError) {
-          console.error("PROFILE ERROR:", profileError);
-          setError("Could not load your profile.");
-          setLoading(false);
-          return;
+          if (profile) {
+            userRole = (profile.role as 'student' | 'instructor') || 'student';
+            if (profile.full_name) userFullName = profile.full_name;
+          } else {
+            const defaultRole = (data.user.user_metadata?.role as 'student' | 'instructor') || 'student';
+            await supabase.from('profiles').upsert({
+              id: data.user.id,
+              full_name: userFullName,
+              email: data.user.email,
+              role: defaultRole,
+            });
+            userRole = defaultRole;
+          }
+        } catch {
+          userRole = (data.user.user_metadata?.role as 'student' | 'instructor') || 'student';
         }
 
-        if (!profile) {
-          setError(
-            "Your profile was not found. Please contact the administrator."
-          );
-          setLoading(false);
-          return;
-        }
+        setUser({
+          userId: data.user.id,
+          fullName: userFullName,
+          email: data.user.email ?? null,
+          role: userRole,
+        });
 
-        // =========================
-        // SAVE ROLE
-        // =========================
-
-        setRole(profile.role);
-
-        // =========================
-        // REDIRECT
-        // =========================
-
-        if (profile.role === "instructor") {
-          router.push("/instructor");
-        } else {
-          router.push("/courses");
-        }
-
+        router.push(userRole === 'instructor' ? '/instructor' : '/courses');
         return;
       }
 
-      // =========================
-      // SIGN UP
-      // =========================
-
+      // SIGN UP (Always creates student account; instructors assigned in DB)
       if (!fullName.trim()) {
-        setError("Full name is required.");
+        setError('Full name is required.');
         setLoading(false);
         return;
       }
 
-      const { data, error: signupError } =
-        await supabase.auth.signUp({
-          email: validatedEmail,
-          password,
-          options: {
-            data: {
-              full_name: fullName.trim(),
-            },
+      const { data, error: signupError } = await supabase.auth.signUp({
+        email: emailResult.data,
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            role: 'student',
           },
-        });
+        },
+      });
 
       if (signupError) {
         setError(signupError.message);
@@ -143,167 +120,258 @@ export default function AuthPage() {
       }
 
       if (!data.user) {
-        setError("Signup failed.");
+        setError('Signup failed.');
         setLoading(false);
         return;
       }
 
-      setSuccess(
-        "Account created successfully. Please check your email to verify your account."
-      );
+      if (data.session) {
+        try {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            full_name: fullName.trim(),
+            email: emailResult.data,
+            role: 'student',
+          });
+        } catch {}
 
+        setUser({
+          userId: data.user.id,
+          fullName: fullName.trim(),
+          email: emailResult.data,
+          role: 'student',
+        });
+
+        router.push('/courses');
+        return;
+      }
+
+      setSuccess('Account created! Check your email to verify, then sign in.');
       setIsLogin(true);
-      setPassword("");
-    } catch (error) {
-      console.error("AUTH ERROR:", error);
-
-      setError("Something went wrong. Please try again.");
+      setPassword('');
+    } catch (err: any) {
+      console.error('AUTH ERROR:', err);
+      setError(err?.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 py-10 text-white">
-      <div className="w-full max-w-md">
-
-        {/* Header */}
-
-        <div className="mb-8 text-center">
-          <p className="text-sm font-semibold text-blue-400">
-            LMS PLATFORM
-          </p>
-
-          <h1 className="mt-2 text-4xl font-bold">
-            {isLogin
-              ? "Welcome back"
-              : "Create your account"}
-          </h1>
-
-          <p className="mt-3 text-slate-400">
-            {isLogin
-              ? "Sign in to continue learning."
-              : "Join our learning platform today."}
-          </p>
-        </div>
-
-        {/* Form */}
-
-        <form
-          onSubmit={handleSubmit}
-          noValidate
-          className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900 p-8"
+    <div
+      style={{
+        minHeight: 'calc(100vh - 60px)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '40px 24px',
+        background: 'var(--bg-base)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28 }}>
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            background: 'linear-gradient(135deg, var(--accent), #8b5cf6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 0 24px var(--accent-glow)',
+          }}
         >
+          <GraduationCap size={22} style={{ color: 'white' }} />
+        </div>
+        <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>
+          SKILL<span style={{ color: 'var(--accent)' }}>EVO</span>
+        </span>
+      </div>
 
-          {/* Full Name */}
-
-          {!isLogin && (
-            <div>
-              <label className="mb-2 block text-sm font-medium">
-                Full name
-              </label>
-
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) =>
-                  setFullName(e.target.value)
-                }
-                placeholder="Enter your full name"
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-blue-500"
-              />
-            </div>
-          )}
-
-          {/* Email */}
-
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Email
-            </label>
-
-            <input
-              type="email"
-              value={email}
-              onChange={(e) =>
-                setEmail(e.target.value)
-              }
-              placeholder="you@example.com"
-              required
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-blue-500"
-            />
-          </div>
-
-          {/* Password */}
-
-          <div>
-            <label className="mb-2 block text-sm font-medium">
-              Password
-            </label>
-
-            <input
-              type="password"
-              value={password}
-              onChange={(e) =>
-                setPassword(e.target.value)
-              }
-              placeholder="Enter your password"
-              required
-              minLength={6}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-blue-500"
-            />
-          </div>
-
-          {/* Error */}
-
-          {error && (
-            <div className="rounded-lg border border-red-800 bg-red-950/40 p-4 text-sm text-red-400">
-              {error}
-            </div>
-          )}
-
-          {/* Success */}
-
-          {success && (
-            <div className="rounded-lg border border-green-800 bg-green-950/40 p-4 text-sm text-green-400">
-              {success}
-            </div>
-          )}
-
-          {/* Submit */}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading
-              ? "Please wait..."
-              : isLogin
-                ? "Login"
-                : "Create Account"}
-          </button>
-        </form>
-
-        {/* Switch Login / Signup */}
-
-        <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError("");
-              setSuccess("");
+      <div style={{ width: '100%', maxWidth: 440 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <h1
+            style={{
+              fontSize: 28,
+              fontWeight: 800,
+              color: 'var(--text-primary)',
+              letterSpacing: '-0.03em',
             }}
-            className="text-sm text-slate-400 hover:text-white"
           >
+            {isLogin ? 'Welcome back' : 'Create Student Account'}
+          </h1>
+          <p style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 6 }}>
             {isLogin
-              ? "Don't have an account? Create one"
-              : "Already have an account? Login"}
-          </button>
+              ? 'Sign in to access your courses and track your progress.'
+              : 'Join SKILL EVO to start learning today.'}
+          </p>
         </div>
 
+        <Card
+          style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            boxShadow: 'var(--shadow-card)',
+            borderRadius: 'var(--radius-lg)',
+          }}
+        >
+          <CardContent style={{ padding: '28px' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: 4,
+                padding: 4,
+                background: 'var(--bg-base)',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: 24,
+                border: '1px solid var(--border)',
+              }}
+            >
+              <button
+                type='button'
+                onClick={() => {
+                  setIsLogin(true);
+                  setError('');
+                  setSuccess('');
+                }}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: isLogin ? 'var(--bg-card)' : 'transparent',
+                  color: isLogin ? 'var(--text-primary)' : 'var(--text-muted)',
+                  boxShadow: isLogin ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Sign In
+              </button>
+              <button
+                type='button'
+                onClick={() => {
+                  setIsLogin(false);
+                  setError('');
+                  setSuccess('');
+                }}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: !isLogin ? 'var(--bg-card)' : 'transparent',
+                  color: !isLogin ? 'var(--text-primary)' : 'var(--text-muted)',
+                  boxShadow: !isLogin ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Sign Up
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {!isLogin && (
+                <div>
+                  <label className='lms-label'>Full Name</label>
+                  <Input
+                    type='text'
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder='e.g. John Doe'
+                    required
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-primary)',
+                    }}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className='lms-label'>Email Address</label>
+                <Input
+                  type='email'
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder='you@example.com'
+                  required
+                  style={{
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className='lms-label'>Password</label>
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder='At least 6 characters'
+                    required
+                    minLength={6}
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-primary)',
+                      paddingRight: 44,
+                    }}
+                  />
+                  <button
+                    type='button'
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--text-muted)',
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              {error && <div className='lms-alert lms-alert--error'>{error}</div>}
+              {success && <div className='lms-alert lms-alert--success'>{success}</div>}
+
+              <Button
+                type='submit'
+                disabled={loading}
+                style={{
+                  width: '100%',
+                  background: 'var(--accent)',
+                  color: 'white',
+                  height: 44,
+                  fontSize: 15,
+                  fontWeight: 600,
+                  marginTop: 6,
+                }}
+              >
+                {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Create Account'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
-    </main>
+    </div>
   );
 }

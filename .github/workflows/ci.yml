@@ -1,4 +1,4 @@
-name: CI
+name: CI — SKILL EVO LMS
 
 on:
   push:
@@ -14,7 +14,14 @@ on:
 
 jobs:
   quality-check:
+    name: Type Check, Lint & Build
     runs-on: ubuntu-latest
+
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
     steps:
       - name: Checkout repository
@@ -36,13 +43,9 @@ jobs:
 
       - name: Type check
         run: pnpm --filter web check-types
-      
+
+      - name: Lint
+        run: pnpm --filter web lint
+
       - name: Build
         run: pnpm --filter web build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-
-        
-
-

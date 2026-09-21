@@ -1,268 +1,249 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-
-type Course = {
-  id: string;
-  title: string;
-};
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ChevronRight, ArrowLeft, CheckCircle2, Sparkles, X } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/store/auth-store';
+import { useRealtimeInvalidate } from '@/hooks/use-realtime-invalidate';
+import VideoPlayer from '@/components/video-player';
+import Link from 'next/link';
 
 type Lesson = {
   id: string;
-  course_id: string;
   title: string;
   description: string | null;
   video_url: string | null;
   order_index: number;
 };
 
-type Progress = {
+type ProgressItem = {
   lesson_id: string;
   completed: boolean;
 };
 
+async function fetchLearnData(courseId: string, userId: string) {
+  const { data: enrollment } = await supabase
+    .from('enrollments')
+    .select('id')
+    .eq('student_id', userId)
+    .eq('course_id', courseId)
+    .maybeSingle();
+
+  if (!enrollment)
+    return {
+      isEnrolled: false,
+      course: null,
+      lessons: [] as Lesson[],
+      progress: [] as ProgressItem[],
+    };
+
+  const { data: course } = await supabase
+    .from('courses')
+    .select('id, title, description')
+    .eq('id', courseId)
+    .maybeSingle();
+
+  const { data: lessons } = await supabase
+    .from('lessons')
+    .select('id, title, description, video_url, order_index')
+    .eq('course_id', courseId)
+    .order('order_index', { ascending: true });
+
+  const lessonIds = (lessons ?? []).map((l: Lesson) => l.id);
+
+  const { data: progress } = await supabase
+    .from('lesson_progress')
+    .select('lesson_id, completed')
+    .eq('student_id', userId)
+    .in('lesson_id', lessonIds.length > 0 ? lessonIds : ['00000000-0000-0000-0000-000000000000']);
+
+  return {
+    isEnrolled: true,
+    course,
+    lessons: (lessons ?? []) as Lesson[],
+    progress: (progress ?? []) as ProgressItem[],
+  };
+}
+
+async function toggleLessonCompletion(
+  userId: string,
+  lessonId: string,
+  courseId: string,
+  currentlyCompleted: boolean
+) {
+  if (currentlyCompleted) {
+    await supabase
+      .from('lesson_progress')
+      .delete()
+      .eq('student_id', userId)
+      .eq('lesson_id', lessonId);
+  } else {
+    await supabase.from('lesson_progress').upsert(
+      {
+        student_id: userId,
+        lesson_id: lessonId,
+        course_id: courseId,
+        completed: true,
+        completed_at: new Date().toISOString(),
+      },
+      { onConflict: 'student_id,lesson_id' }
+    );
+  }
+}
+
 export default function LearnPage() {
   const params = useParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const courseId = params.id as string;
+  const { userId, isInitialized } = useAuthStore();
 
-  const [course, setCourse] = useState<Course | null>(null);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [progress, setProgress] = useState<Progress[]>([]);
-  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isEnrolled, setIsEnrolled] = useState(false);
-  const [markingComplete, setMarkingComplete] = useState(false);
+  const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Fetch course, lessons, enrollment and progress
+  const { data, isLoading } = useQuery({
+    queryKey: ['learn', courseId, userId],
+    queryFn: () => fetchLearnData(courseId, userId!),
+    enabled: !!userId && !!courseId,
+  });
+
   useEffect(() => {
-    async function loadLearnPage() {
-      setLoading(true);
-
-      // Get logged-in user
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.push("/auth");
-        return;
-      }
-
-      // Check enrollment
-      const { data: enrollment, error: enrollmentError } =
-        await supabase
-          .from("enrollments")
-          .select("id")
-          .eq("student_id", user.id)
-          .eq("course_id", courseId)
-          .maybeSingle();
-
-      if (enrollmentError) {
-        console.error("ENROLLMENT ERROR:", enrollmentError);
-        setLoading(false);
-        return;
-      }
-
-      if (!enrollment) {
-        setIsEnrolled(false);
-        setLoading(false);
-        return;
-      }
-
-      setIsEnrolled(true);
-
-      // Fetch course
-      const { data: courseData, error: courseError } = await supabase
-        .from("courses")
-        .select("id, title")
-        .eq("id", courseId)
-        .single();
-
-      if (courseError) {
-        console.error("COURSE ERROR:", courseError);
-      } else {
-        setCourse(courseData);
-      }
-
-      // Fetch lessons
-      const { data: lessonsData, error: lessonsError } = await supabase
-        .from("lessons")
-        .select(
-          "id, course_id, title, description, video_url, order_index"
-        )
-        .eq("course_id", courseId)
-        .order("order_index", { ascending: true });
-
-      if (lessonsError) {
-        console.error("LESSONS ERROR:", lessonsError);
-      } else {
-        setLessons(lessonsData || []);
-
-        // Select first lesson
-        if (lessonsData && lessonsData.length > 0) {
-          setSelectedLesson(lessonsData[0] ?? null);
-        }
-      }
-
-      // Fetch ONLY progress for lessons in this course
-      const { data: progressData, error: progressError } =
-        await supabase
-          .from("lesson_progress")
-          .select("lesson_id, completed, lessons!inner(course_id)")
-          .eq("student_id", user.id)
-          .eq("lessons.course_id", courseId);
-
-      if (progressError) {
-        console.error("PROGRESS ERROR:", progressError);
-      } else {
-        setProgress(
-          (progressData ?? []).map((item) => ({
-            lesson_id: item.lesson_id,
-            completed: item.completed,
-          }))
-        );
-      }
-
-      setLoading(false);
+    if (data?.isEnrolled && data.lessons.length > 0 && !selectedLessonId) {
+      setSelectedLessonId(data.lessons[0]?.id ?? null);
     }
+  }, [data, selectedLessonId]);
 
-    loadLearnPage();
-  }, [courseId, router]);
+  const studentFilter = userId ? ('student_id=eq.' + userId) : undefined;
+  useRealtimeInvalidate(
+    'lesson_progress',
+    [['learn', courseId, userId]],
+    ['*'],
+    studentFilter
+  );
 
-  // Check whether selected lesson is completed
-  const isCompleted =
-    selectedLesson &&
-    progress.some(
-      (item) =>
-        item.lesson_id === selectedLesson.id && item.completed === true
-    );
+  const toggleMutation = useMutation({
+    mutationFn: async ({
+      lessonId,
+      currentlyCompleted,
+    }: {
+      lessonId: string;
+      currentlyCompleted: boolean;
+    }) => {
+      if (!userId) throw new Error('Not logged in');
+      await toggleLessonCompletion(userId, lessonId, courseId, currentlyCompleted);
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['learn', courseId, userId] });
+      queryClient.invalidateQueries({ queryKey: ['my-learning', userId] });
+      queryClient.invalidateQueries({ queryKey: ['manage-course', courseId] });
 
-  // Number of completed lessons
-  const completedLessons = progress.filter(
-    (item) => item.completed === true
-  ).length;
-
-  // Calculate percentage
-  const progressPercentage =
-    lessons.length > 0
-      ? Math.round((completedLessons / lessons.length) * 100)
-      : 0;
-
-  // Mark lesson as complete
-  async function markComplete() {
-    if (!selectedLesson) return;
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      router.push("/auth");
-      return;
-    }
-
-    setMarkingComplete(true);
-
-    const { error } = await supabase
-      .from("lesson_progress")
-      .upsert(
-        {
-          student_id: user.id,
-          lesson_id: selectedLesson.id,
-          completed: true,
-          completed_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "student_id,lesson_id",
-        }
-      );
-
-    if (error) {
-      console.error("MARK COMPLETE ERROR:", error);
-      setMarkingComplete(false);
-      return;
-    }
-
-    // Update progress immediately in UI
-    setProgress((currentProgress) => {
-      const existing = currentProgress.find(
-        (item) => item.lesson_id === selectedLesson.id
-      );
-
-      if (existing) {
-        return currentProgress.map((item) =>
-          item.lesson_id === selectedLesson.id
-            ? { ...item, completed: true }
-            : item
-        );
+      if (!variables.currentlyCompleted) {
+        setToastMessage('?? Lesson Completed! Your progress has been updated.');
+        setTimeout(() => setToastMessage(null), 5000);
       }
+    },
+  });
 
-      return [
-        ...currentProgress,
-        {
-          lesson_id: selectedLesson.id,
-          completed: true,
-        },
-      ];
-    });
-
-    setMarkingComplete(false);
-  }
-
-  // Go to next lesson
-  function goToNextLesson() {
-    if (!selectedLesson) return;
-
-    const currentIndex = lessons.findIndex(
-      (lesson) => lesson.id === selectedLesson.id
-    );
-
-    if (currentIndex < lessons.length - 1) {
-      setSelectedLesson(lessons[currentIndex + 1] ?? null);
-    }
-  }
-
-  // Go to previous lesson
-  function goToPreviousLesson() {
-    if (!selectedLesson) return;
-
-    const currentIndex = lessons.findIndex(
-      (lesson) => lesson.id === selectedLesson.id
-    );
-
-    if (currentIndex > 0) {
-      setSelectedLesson(lessons[currentIndex - 1] ?? null);
-    }
-  }
-
-  if (loading) {
+  if (!isInitialized || isLoading) {
     return (
-      <main className="min-h-screen bg-gray-50 p-8">
-        <div className="mx-auto max-w-6xl">
-          <p className="text-gray-600">Loading course...</p>
+      <main className='lms-page'>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '80vh',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              alignItems: 'center',
+            }}
+          >
+            <div
+              className='lms-skeleton'
+              style={{ width: 48, height: 48, borderRadius: '50%' }}
+            />
+            <div className='lms-skeleton' style={{ width: 200, height: 14 }} />
+            <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>Loading course...</p>
+          </div>
         </div>
       </main>
     );
   }
 
-  if (!isEnrolled) {
+  if (!userId) {
     return (
-      <main className="min-h-screen bg-gray-50 p-8">
-        <div className="mx-auto max-w-3xl rounded-xl bg-white p-8 text-center shadow">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Enrollment Required
-          </h1>
+      <main
+        className='lms-page'
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '80vh',
+        }}
+      >
+        <div style={{ textAlign: 'center' }}>
+          <h2
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              marginBottom: 12,
+            }}
+          >
+            Sign in to access this course
+          </h2>
+          <Link href='/auth' className='lms-btn lms-btn--primary'>
+            Sign In
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
-          <p className="mt-2 text-gray-600">
+  if (!data?.isEnrolled) {
+    return (
+      <main
+        className='lms-page'
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '80vh',
+        }}
+      >
+        <div
+          className='lms-card'
+          style={{ padding: 48, textAlign: 'center', maxWidth: 420 }}
+        >
+          <h2
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              marginBottom: 12,
+            }}
+          >
+            Not enrolled
+          </h2>
+          <p
+            style={{
+              fontSize: 14,
+              color: 'var(--text-muted)',
+              marginBottom: 24,
+            }}
+          >
             You need to enroll in this course before you can start learning.
           </p>
-
           <button
-            onClick={() => router.push(`/courses/${courseId}`)}
-            className="mt-6 rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+            className='lms-btn lms-btn--primary'
+            onClick={() => router.push('/courses/' + courseId)}
           >
             Go to Course
           </button>
@@ -271,213 +252,499 @@ export default function LearnPage() {
     );
   }
 
+  const { course, lessons, progress } = data;
+  const completedSet = new Set(
+    progress.filter((p) => p.completed).map((p) => p.lesson_id)
+  );
+  const completedCount = completedSet.size;
+  const total = lessons.length;
+  const progressPct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+
+  const selectedLesson: Lesson | null =
+    lessons.find((l) => l.id === selectedLessonId) ?? lessons[0] ?? null;
+  const selectedIndex = selectedLesson
+    ? lessons.findIndex((l) => l.id === selectedLesson.id)
+    : -1;
+  const isCompleted = selectedLesson ? completedSet.has(selectedLesson.id) : false;
+
+  function goNext() {
+    if (selectedIndex >= 0 && selectedIndex < lessons.length - 1) {
+      const next = lessons[selectedIndex + 1];
+      if (next) setSelectedLessonId(next.id);
+    }
+  }
+
+  function goPrev() {
+    if (selectedIndex > 0) {
+      const prev = lessons[selectedIndex - 1];
+      if (prev) setSelectedLessonId(prev.id);
+    }
+  }
+
+  const handleAutoWatched = () => {
+    if (selectedLesson && !isCompleted && !toggleMutation.isPending) {
+      toggleMutation.mutate({
+        lessonId: selectedLesson.id,
+        currentlyCompleted: false,
+      });
+    }
+  };
+
+  const courseOverviewLink = '/courses/' + courseId;
+  const progressFillWidth = String(progressPct) + '%';
+  const lessonOrderDisplay = selectedLesson
+    ? 'Lesson ' + String(selectedLesson.order_index) + ' of ' + String(lessons.length)
+    : '';
+
   return (
-    <main className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="border-b bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-5">
-          <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">
-            Learning
-          </p>
+    <main className='lms-page' style={{ position: 'relative' }}>
+      {toastMessage && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 76,
+            right: 24,
+            zIndex: 1000,
+            background: 'var(--bg-card)',
+            border: '1.5px solid var(--green)',
+            color: 'var(--text-primary)',
+            padding: '12px 18px',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            animation: 'dropdownIn 0.2s ease',
+          }}
+        >
+          <Sparkles size={18} style={{ color: 'var(--green)' }} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{toastMessage}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: 2,
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
-          <h1 className="mt-1 text-2xl font-bold text-gray-900">
-            {course?.title}
-          </h1>
-
-          {/* Progress */}
-          <div className="mt-5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-600">
-                Course Progress
-              </span>
-
-              <span className="text-sm font-bold text-blue-600">
-                {progressPercentage}%
-              </span>
+      <div
+        style={{
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-card)',
+          padding: '12px 0',
+          position: 'sticky',
+          top: 60,
+          zIndex: 40,
+        }}
+      >
+        <div className='lms-container'>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 24,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <Link
+                href={courseOverviewLink}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 32,
+                  height: 32,
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-base)',
+                  color: 'var(--text-secondary)',
+                }}
+                title='Back to Course Overview'
+              >
+                <ArrowLeft size={16} />
+              </Link>
+              <div>
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--accent)',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                  }}
+                >
+                  Learning Mode
+                </p>
+                <h1
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: 'var(--text-primary)',
+                    margin: 0,
+                  }}
+                >
+                  {course?.title}
+                </h1>
+              </div>
             </div>
 
-            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
-              <div
-                className="h-2 rounded-full bg-blue-600 transition-all duration-300"
-                style={{ width: `${progressPercentage}%` }}
-              />
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
+                minWidth: 240,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginBottom: 5,
+                  }}
+                >
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {completedCount} of {total} lessons ({progressPct}%)
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: progressPct === 100 ? 'var(--green)' : 'var(--accent)',
+                    }}
+                  >
+                    {progressPct === 100 ? 'Completed!' : (String(progressPct) + '%')}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 99,
+                    background: 'var(--border)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: progressFillWidth,
+                      background:
+                        progressPct === 100
+                          ? 'var(--green)'
+                          : 'linear-gradient(90deg, var(--accent), #8b5cf6)',
+                      transition: 'width 0.4s ease',
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-
-            <p className="mt-2 text-xs text-gray-500">
-              {completedLessons} / {lessons.length} lessons completed
-            </p>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* Main */}
-      <div className="mx-auto grid max-w-7xl gap-6 px-6 py-8 lg:grid-cols-[320px_1fr]">
-        {/* Lesson Sidebar */}
-        <aside className="rounded-xl border bg-white p-4 shadow-sm">
-          <h2 className="mb-4 text-lg font-bold text-gray-900">
-            Course Lessons
-          </h2>
-
-          {lessons.length === 0 ? (
-            <p className="text-sm text-gray-500">
-              No lessons available.
+      <div
+        className='lms-learn-layout'
+      >
+        <aside
+          className='lms-learn-sidebar'
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 14,
+              paddingLeft: 4,
+            }}
+          >
+            <p
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--text-muted)',
+              }}
+            >
+              Course Curriculum
             </p>
-          ) : (
-            <div className="space-y-2">
-              {lessons.map((lesson, index) => {
-                const completed = progress.some(
-                  (item) =>
-                    item.lesson_id === lesson.id &&
-                    item.completed === true
-                );
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--accent)',
+                background: 'var(--bg-card)',
+                padding: '2px 8px',
+                borderRadius: 99,
+                border: '1px solid var(--border)',
+              }}
+            >
+              {lessons.length} lessons
+            </span>
+          </div>
 
-                const selected = selectedLesson?.id === lesson.id;
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {lessons.map((lesson, index) => {
+              const completed = completedSet.has(lesson.id);
+              const active = selectedLessonId === lesson.id;
 
-                return (
+              return (
+                <div
+                  key={lesson.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '6px 8px',
+                    borderRadius: 'var(--radius-md)',
+                    background: active ? 'var(--bg-card)' : 'transparent',
+                    border: '1px solid ' + (active ? 'var(--border-accent)' : 'transparent'),
+                    transition: 'all 0.15s ease',
+                  }}
+                >
                   <button
-                    key={lesson.id}
-                    onClick={() => setSelectedLesson(lesson)}
-                    className={`w-full rounded-lg border p-3 text-left transition ${
-                      selected
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:bg-gray-50"
-                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMutation.mutate({
+                        lessonId: lesson.id,
+                        currentlyCompleted: completed,
+                      });
+                    }}
+                    disabled={toggleMutation.isPending}
+                    title={
+                      completed
+                        ? 'Completed - Click to unmark'
+                        : 'Click to mark complete'
+                    }
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: '50%',
+                      border: '2px solid ' + (completed ? 'var(--green)' : 'var(--border-hover)'),
+                      background: completed ? 'var(--green-bg)' : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      transition: 'all 0.2s ease',
+                    }}
                   >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-700">
-                        {index + 1}
-                      </div>
-
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-gray-900">
-                          {lesson.title}
-                        </p>
-
-                        {completed && (
-                          <p className="mt-1 text-xs font-medium text-green-600">
-                            ✓ Completed
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                    {completed && (
+                      <CheckCircle2
+                        size={15}
+                        style={{ color: 'var(--green)' }}
+                      />
+                    )}
                   </button>
-                );
-              })}
-            </div>
-          )}
+
+                  <button
+                    onClick={() => setSelectedLessonId(lesson.id)}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      padding: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: '50%',
+                        background: active
+                          ? 'var(--accent)'
+                          : 'var(--bg-base)',
+                        color: active ? 'white' : 'var(--text-muted)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        flexShrink: 0,
+                        border: '1px solid var(--border)',
+                      }}
+                    >
+                      {index + 1}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 13,
+                        fontWeight: active ? 600 : 500,
+                        color: active
+                          ? 'var(--text-primary)'
+                          : 'var(--text-secondary)',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {lesson.title}
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </aside>
 
-        {/* Lesson Content */}
-        <section className="rounded-xl border bg-white p-6 shadow-sm">
+        <section className='lms-learn-content'>
           {!selectedLesson ? (
-            <div className="py-16 text-center">
-              <p className="text-gray-500">
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+              }}
+            >
+              <p style={{ color: 'var(--text-muted)' }}>
                 Select a lesson to start learning.
               </p>
             </div>
           ) : (
-            <>
-              {/* Lesson title */}
-              <div>
-                <p className="text-sm font-medium text-blue-600">
-                  Lesson {selectedLesson.order_index}
+            <div style={{ maxWidth: 960, margin: '0 auto' }}>
+              <div style={{ marginBottom: 20 }}>
+                <p
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--accent)',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    marginBottom: 6,
+                  }}
+                >
+                  {lessonOrderDisplay}
                 </p>
-
-                <h2 className="mt-1 text-2xl font-bold text-gray-900">
+                <h2
+                  style={{
+                    fontSize: 26,
+                    fontWeight: 800,
+                    color: 'var(--text-primary)',
+                    letterSpacing: '-0.02em',
+                  }}
+                >
                   {selectedLesson.title}
                 </h2>
               </div>
 
-              {/* Video */}
-              {selectedLesson.video_url ? (
-                <div className="mt-6">
-                  <a
-                    href={selectedLesson.video_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
-                  >
-                    ▶ Watch Lesson Video
-                  </a>
-                </div>
-              ) : (
-                <div className="mt-6 rounded-lg bg-gray-100 p-6 text-center">
-                  <p className="text-sm text-gray-500">
-                    No video available for this lesson.
-                  </p>
-                </div>
-              )}
+              <VideoPlayer
+                url={selectedLesson.video_url}
+                title={selectedLesson.title}
+                isCompleted={isCompleted}
+                onComplete={handleAutoWatched}
+              />
 
-              {/* Description */}
               {selectedLesson.description && (
-                <div className="mt-6">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    About this lesson
+                <div
+                  style={{
+                    marginTop: 24,
+                    padding: '22px 24px',
+                    borderRadius: 'var(--radius-lg)',
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <h3
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      color: 'var(--text-primary)',
+                      marginBottom: 8,
+                    }}
+                  >
+                    Lesson Overview
                   </h3>
-
-                  <p className="mt-2 whitespace-pre-line text-gray-600">
+                  <p
+                    style={{
+                      fontSize: 14,
+                      color: 'var(--text-secondary)',
+                      lineHeight: 1.7,
+                      whiteSpace: 'pre-line',
+                    }}
+                  >
                     {selectedLesson.description}
                   </p>
                 </div>
               )}
 
-              {/* Actions */}
-              <div className="mt-8 flex flex-wrap items-center gap-3 border-t pt-6">
-                {/* Previous */}
+              <div
+                style={{
+                  marginTop: 28,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  paddingTop: 20,
+                  borderTop: '1px solid var(--border)',
+                  flexWrap: 'wrap',
+                }}
+              >
                 <button
-                  onClick={goToPreviousLesson}
-                  disabled={
-                    lessons.findIndex(
-                      (lesson) => lesson.id === selectedLesson.id
-                    ) === 0
-                  }
-                  className="rounded-lg border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  className='lms-btn lms-btn--secondary'
+                  onClick={goPrev}
+                  disabled={selectedIndex <= 0}
+                  style={{
+                    opacity: selectedIndex <= 0 ? 0.5 : 1,
+                    cursor: selectedIndex <= 0 ? 'not-allowed' : 'pointer',
+                  }}
                 >
-                  ← Previous
+                  Previous Lesson
                 </button>
 
-                {/* Mark Complete */}
-                <button
-                  onClick={markComplete}
-                  disabled={isCompleted || markingComplete}
-                  className={`rounded-lg px-5 py-2 font-semibold text-white ${
-                    isCompleted
-                      ? "cursor-not-allowed bg-green-600"
-                      : "bg-blue-600 hover:bg-blue-700"
-                  }`}
-                >
-                  {markingComplete
-                    ? "Saving..."
-                    : isCompleted
-                      ? "✓ Completed"
-                      : "Mark as Complete"}
-                </button>
-
-                {/* Next */}
-                {lessons.findIndex(
-                  (lesson) => lesson.id === selectedLesson.id
-                ) <
-                  lessons.length - 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <button
-                    onClick={goToNextLesson}
-                    className="rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                    className='lms-btn'
+                    style={
+                      isCompleted
+                        ? {
+                            background: 'var(--green-bg)',
+                            color: 'var(--green)',
+                            border: '1px solid var(--green-border)',
+                          }
+                        : {
+                            background: 'var(--accent)',
+                            color: 'white',
+                            boxShadow: '0 0 20px var(--accent-glow)',
+                          }
+                    }
+                    onClick={() =>
+                      toggleMutation.mutate({
+                        lessonId: selectedLesson.id,
+                        currentlyCompleted: isCompleted,
+                      })
+                    }
+                    disabled={toggleMutation.isPending}
                   >
-                    Next Lesson →
+                    {toggleMutation.isPending
+                      ? 'Saving...'
+                      : isCompleted
+                      ? 'Completed (Click to Undo)'
+                      : 'Mark as Completed'}
                   </button>
-                )}
 
-                {/* Last lesson */}
-                {lessons.findIndex(
-                  (lesson) => lesson.id === selectedLesson.id
-                ) ===
-                  lessons.length - 1 &&
-                  isCompleted && (
-                    <span className="text-sm font-medium text-green-600">
-                      🎉 Course completed!
-                    </span>
+                  {selectedIndex >= 0 && selectedIndex < lessons.length - 1 && (
+                    <button className='lms-btn lms-btn--primary' onClick={goNext}>
+                      Next Lesson <ChevronRight size={15} />
+                    </button>
                   )}
+                </div>
               </div>
-            </>
+            </div>
           )}
         </section>
       </div>

@@ -1,9 +1,12 @@
-"use client";
+﻿"use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { BookOpen, CheckCircle, Users, ArrowLeft } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useAuthStore } from "@/store/auth-store";
+import { useRealtimeInvalidate } from "@/hooks/use-realtime-invalidate";
 
 type Course = {
   id: string;
@@ -18,368 +21,172 @@ type Lesson = {
   id: string;
   title: string;
   description: string | null;
-  video_url: string | null;
   order_index: number;
 };
 
-export default function CourseDetailsPage() {
-  const params = useParams();
-  const router = useRouter();
+async function fetchCourseData(courseId: string, userId: string | null) {
+  const { data: course, error: courseError } = await supabase
+    .from("courses")
+    .select("id, title, description, category, thumbnail_url, published")
+    .eq("id", courseId)
+    .maybeSingle();
 
-  const courseId = params.id as string;
+  if (courseError || !course) throw new Error("Course not found");
 
-  const [course, setCourse] = useState<Course | null>(null);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [isEnrolled, setIsEnrolled] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [enrolling, setEnrolling] = useState(false);
-  const [message, setMessage] = useState("");
+  const { data: lessons } = await supabase
+    .from("lessons")
+    .select("id, title, description, order_index")
+    .eq("course_id", courseId)
+    .order("order_index", { ascending: true });
 
-  useEffect(() => {
-    async function fetchCourse() {
-      setLoading(true);
-
-      // ==========================================
-      // 1. CHECK CURRENT USER
-      // ==========================================
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      console.log("================================");
-      console.log("DEBUG: CURRENT USER");
-      console.log("USER:", user);
-      console.log("USER ID:", user?.id);
-      console.log("USER EMAIL:", user?.email);
-      console.log("================================");
-
-      // ==========================================
-      // 2. FETCH COURSE
-      // ==========================================
-
-      const { data: courseData, error: courseError } = await supabase
-        .from("courses")
-        .select(
-          "id, title, description, category, thumbnail_url, published"
-        )
-        .eq("id", courseId)
-        .eq("published", true)
-        .single();
-
-      if (courseError) {
-        console.error("COURSE ERROR:", courseError);
-        setMessage("Course not found.");
-        setLoading(false);
-        return;
-      }
-
-      setCourse(courseData);
-
-      // ==========================================
-      // 3. FETCH LESSONS
-      // ==========================================
-
-      const { data: lessonsData, error: lessonsError } = await supabase
-        .from("lessons")
-        .select(
-          "id, title, description, video_url, order_index"
-        )
-        .eq("course_id", courseId)
-        .order("order_index", { ascending: true });
-
-      if (lessonsError) {
-        console.error("LESSONS ERROR:", lessonsError);
-      } else {
-        setLessons(lessonsData || []);
-      }
-
-      // ==========================================
-      // 4. CHECK ENROLLMENT
-      // ==========================================
-
-      if (user) {
-        console.log("Checking enrollment for:");
-        console.log("Student ID:", user.id);
-        console.log("Course ID:", courseId);
-
-        const {
-          data: enrollment,
-          error: enrollmentError,
-        } = await supabase
-          .from("enrollments")
-          .select("id")
-          .eq("student_id", user.id)
-          .eq("course_id", courseId)
-          .maybeSingle();
-
-        console.log("================================");
-        console.log("DEBUG: ENROLLMENT RESULT");
-        console.log("ENROLLMENT:", enrollment);
-        console.log("ENROLLMENT ERROR:", enrollmentError);
-        console.log("IS ENROLLED:", !!enrollment);
-        console.log("================================");
-
-        if (enrollmentError) {
-          console.error(
-            "ENROLLMENT CHECK ERROR:",
-            enrollmentError
-          );
-
-          setIsEnrolled(false);
-        } else {
-          setIsEnrolled(!!enrollment);
-        }
-      } else {
-        console.log("================================");
-        console.log("DEBUG: USER IS NOT LOGGED IN");
-        console.log("IS ENROLLED: false");
-        console.log("================================");
-
-        setIsEnrolled(false);
-      }
-
-      setLoading(false);
-    }
-
-    fetchCourse();
-  }, [courseId]);
-
-  // ==========================================
-  // ENROLL STUDENT
-  // ==========================================
-
-  async function handleEnroll() {
-    setEnrolling(true);
-    setMessage("");
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      console.log("ENROLL BUTTON USER:", user);
-
-      if (!user) {
-        console.log("No user → redirecting to /auth");
-
-        router.push("/auth");
-        return;
-      }
-
-      const { error } = await supabase
-        .from("enrollments")
-        .insert({
-          student_id: user.id,
-          course_id: courseId,
-        });
-
-      if (error) {
-        console.error("ENROLLMENT ERROR:", error);
-        setMessage(error.message);
-        return;
-      }
-
-      console.log("ENROLLMENT CREATED");
-
-      setIsEnrolled(true);
-      setMessage("Successfully enrolled in the course!");
-    } catch (error) {
-      console.error("UNEXPECTED ERROR:", error);
-      setMessage("Something went wrong.");
-    } finally {
-      setEnrolling(false);
-    }
+  let isEnrolled = false;
+  if (userId) {
+    const { data: enrollment } = await supabase
+      .from("enrollments")
+      .select("id")
+      .eq("student_id", userId)
+      .eq("course_id", courseId)
+      .maybeSingle();
+    isEnrolled = !!enrollment;
   }
 
-  // ==========================================
-  // LOADING
-  // ==========================================
+  return { course, lessons: lessons ?? [], isEnrolled };
+}
 
-  if (loading) {
+export default function CourseDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const courseId = params.id as string;
+  const { userId } = useAuthStore();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["course-detail", courseId, userId],
+    queryFn: () => fetchCourseData(courseId, userId),
+    enabled: !!courseId,
+  });
+
+  useRealtimeInvalidate("enrollments", [["course-detail", courseId, userId]]);
+
+  const enrollMutation = useMutation({
+    mutationFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.push("/auth"); throw new Error("Not authenticated"); }
+      const { error } = await supabase.from("enrollments").insert({ student_id: user.id, course_id: courseId });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["course-detail", courseId, userId] });
+      queryClient.invalidateQueries({ queryKey: ["my-learning", userId] });
+      router.push("/courses/" + courseId + "/learn");
+    },
+  });
+
+  if (isLoading) {
     return (
-      <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-        <div className="mx-auto max-w-6xl">
-          <p className="text-slate-400">
-            Loading course...
-          </p>
+      <main className="lms-page" style={{ paddingTop: 48, paddingBottom: 80 }}>
+        <div className="lms-container">
+          <div className="lms-skeleton" style={{ height: 14, width: 120, marginBottom: 24 }} />
+          <div className="lms-card" style={{ overflow: "hidden" }}>
+            <div className="lms-skeleton" style={{ height: 300 }} />
+            <div className="lms-course-detail-body">
+              <div className="lms-skeleton" style={{ height: 14, width: 100, marginBottom: 14 }} />
+              <div className="lms-skeleton" style={{ height: 44, width: "70%", marginBottom: 16 }} />
+              <div className="lms-skeleton" style={{ height: 16, width: "95%", marginBottom: 8 }} />
+              <div className="lms-skeleton" style={{ height: 16, width: "80%", marginBottom: 32 }} />
+              <div className="lms-skeleton" style={{ height: 44, width: 140, borderRadius: 10 }} />
+            </div>
+          </div>
         </div>
       </main>
     );
   }
 
-  // ==========================================
-  // COURSE NOT FOUND
-  // ==========================================
-
-  if (!course) {
+  if (error || !data?.course) {
     return (
-      <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-        <div className="mx-auto max-w-3xl rounded-2xl border border-slate-800 bg-slate-900 p-10 text-center">
-          <h1 className="text-2xl font-bold">
-            Course Not Found
-          </h1>
-
-          <p className="mt-3 text-slate-400">
-            {message || "This course could not be found."}
-          </p>
-
-          <Link
-            href="/courses"
-            className="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
-          >
-            Back to Courses
+      <main className="lms-page" style={{ paddingTop: 48 }}>
+        <div className="lms-container">
+          <div className="lms-alert lms-alert--error">Course not found.</div>
+          <Link href="/courses" className="lms-btn lms-btn--ghost" style={{ marginTop: 16 }}>
+            <ArrowLeft size={14} /> Back to Courses
           </Link>
         </div>
       </main>
     );
   }
 
-  // ==========================================
-  // PAGE
-  // ==========================================
+  const { course, lessons, isEnrolled } = data;
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-      <div className="mx-auto max-w-6xl">
-
-        <Link
-          href="/courses"
-          className="text-sm text-blue-400 hover:text-blue-300"
-        >
-          ← Back to Courses
+    <main className="lms-page" style={{ paddingTop: 40, paddingBottom: 80 }}>
+      <div className="lms-container">
+        <Link href="/courses" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, color: "var(--accent-hover)", marginBottom: 28 }}>
+          <ArrowLeft size={14} /> Back to Courses
         </Link>
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
-
-          {/* Thumbnail */}
-
+        <div className="lms-card" style={{ overflow: "hidden" }}>
           {course.thumbnail_url ? (
-            <img
-              src={course.thumbnail_url}
-              alt={course.title}
-              className="h-72 w-full object-cover"
-            />
+            <img src={course.thumbnail_url} alt={course.title} style={{ width: "100%", height: 320, objectFit: "cover", display: "block" }} />
           ) : (
-            <div className="flex h-72 w-full items-center justify-center bg-slate-800">
-              <span className="text-slate-500">
-                No thumbnail available
-              </span>
+            <div style={{ width: "100%", height: 320, background: "var(--bg-surface)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <BookOpen size={48} style={{ color: "var(--text-muted)" }} />
             </div>
           )}
 
-          {/* Course information */}
+          <div style={{ padding: 40 }}>
+            {course.category && <span className="lms-badge lms-badge--accent" style={{ marginBottom: 14 }}>{course.category}</span>}
+            <h1 className="lms-course-detail-title">{course.title}</h1>
+            <p style={{ fontSize: 15, color: "var(--text-muted)", lineHeight: 1.7, maxWidth: 680, marginBottom: 32 }}>{course.description}</p>
 
-          <div className="p-8">
-
-            {course.category && (
-              <p className="text-sm font-semibold uppercase tracking-wider text-blue-400">
-                {course.category}
-              </p>
-            )}
-
-            <h1 className="mt-2 text-4xl font-bold">
-              {course.title}
-            </h1>
-
-            <p className="mt-5 max-w-3xl leading-7 text-slate-400">
-              {course.description}
-            </p>
-
-            {/* Enrollment */}
-
-            <div className="mt-8 flex flex-wrap items-center gap-4">
-
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               {!isEnrolled ? (
-                <button
-                  onClick={handleEnroll}
-                  disabled={enrolling}
-                  className="rounded-lg bg-blue-600 px-6 py-3 font-semibold hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {enrolling
-                    ? "Enrolling..."
-                    : "Enroll Now"}
-                </button>
+                !userId ? (
+                  <Link href="/auth" className="lms-btn lms-btn--primary lms-btn--lg">Sign in to Enroll</Link>
+                ) : (
+                  <button className="lms-btn lms-btn--primary lms-btn--lg" onClick={() => enrollMutation.mutate()} disabled={enrollMutation.isPending}>
+                    {enrollMutation.isPending ? "Enrolling..." : "Enroll Now — Free"}
+                  </button>
+                )
               ) : (
                 <>
-                  <Link
-                    href={`/courses/${course.id}/learn`}
-                    className="rounded-lg bg-blue-600 px-6 py-3 font-semibold hover:bg-blue-700"
-                  >
-                    Start Learning →
-                  </Link>
-
-                  <span className="rounded-lg bg-green-500/10 px-4 py-3 text-sm font-medium text-green-400">
-                    ✓ Enrolled
+                  <Link href={`/courses/${course.id}/learn`} className="lms-btn lms-btn--primary lms-btn--lg">Start Learning →</Link>
+                  <span className="lms-badge lms-badge--green" style={{ padding: "8px 16px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                    <CheckCircle size={14} />Enrolled
                   </span>
                 </>
               )}
-
             </div>
 
-            {message && (
-              <p className="mt-4 rounded-lg bg-slate-800 p-4 text-sm text-slate-300">
-                {message}
-              </p>
-            )}
-
+            {enrollMutation.error && <div className="lms-alert lms-alert--error" style={{ marginTop: 16 }}>{(enrollMutation.error as Error).message}</div>}
           </div>
         </div>
 
-        {/* Lessons */}
+        <section style={{ marginTop: 36 }}>
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ fontSize: 24, fontWeight: 800, color: "var(--text-primary)" }}>Course Curriculum</h2>
+            <p style={{ fontSize: 14, color: "var(--text-muted)", marginTop: 6 }}>{lessons.length} lesson{lessons.length !== 1 ? "s" : ""} in this course</p>
+          </div>
 
-        <section className="mt-8">
-
-          <h2 className="text-2xl font-bold">
-            Course Lessons
-          </h2>
-
-          <p className="mt-2 text-slate-400">
-            {lessons.length} lessons included in this course.
-          </p>
-
-          <div className="mt-5 space-y-3">
-
-            {lessons.length === 0 ? (
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-                <p className="text-slate-400">
-                  No lessons available yet.
-                </p>
-              </div>
-            ) : (
-              lessons.map((lesson, index) => (
-                <div
-                  key={lesson.id}
-                  className="flex items-center gap-4 rounded-xl border border-slate-800 bg-slate-900 p-5"
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600/10 text-sm font-bold text-blue-400">
+          {lessons.length === 0 ? (
+            <div className="lms-card" style={{ padding: 32, textAlign: "center" }}>
+              <p style={{ color: "var(--text-muted)" }}>No lessons available yet.</p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {lessons.map((lesson, index) => (
+                <div key={lesson.id} style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 20px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--bg-card)" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--accent-glow)", color: "var(--accent-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
                     {index + 1}
                   </div>
-
-                  <div className="flex-1">
-                    <h3 className="font-semibold">
-                      {lesson.title}
-                    </h3>
-
-                    {lesson.description && (
-                      <p className="mt-1 text-sm text-slate-400">
-                        {lesson.description}
-                      </p>
-                    )}
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{lesson.title}</p>
+                    {lesson.description && <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>{lesson.description}</p>}
                   </div>
-
-                  {isEnrolled && (
-                    <span className="text-xs text-slate-500">
-                      Lesson {index + 1}
-                    </span>
-                  )}
                 </div>
-              ))
-            )}
-
-          </div>
+              ))}
+            </div>
+          )}
         </section>
-
       </div>
     </main>
   );
