@@ -104,7 +104,7 @@ export default function Home() {
                 <ArrowRight size={18} />
               </Link>
               <Link
-                href='/auth'
+                href='/auth?mode=signup'
                 className='lms-btn lms-btn--secondary'
                 style={{ padding: '14px 28px', fontSize: 16, fontWeight: 600 }}
               >
@@ -421,8 +421,11 @@ export default function Home() {
             <Link href='/courses' style={{ fontSize: 13, color: 'var(--text-muted)' }}>
               Courses
             </Link>
-            <Link href='/auth' style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            <Link href='/auth?mode=login' style={{ fontSize: 13, color: 'var(--text-muted)' }}>
               Sign In
+            </Link>
+            <Link href='/auth?mode=signup' style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              Sign Up
             </Link>
           </div>
         </div>

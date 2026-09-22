@@ -98,7 +98,7 @@ export default function LearnPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const courseId = params.id as string;
-  const { userId, isInitialized } = useAuthStore();
+  const { userId, role, isInitialized } = useAuthStore();
 
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -230,7 +230,7 @@ export default function LearnPage() {
               marginBottom: 12,
             }}
           >
-            Not enrolled
+            {role === 'instructor' ? 'Instructor Account' : 'Not Enrolled'}
           </h2>
           <p
             style={{
@@ -239,7 +239,9 @@ export default function LearnPage() {
               marginBottom: 24,
             }}
           >
-            You need to enroll in this course before you can start learning.
+            {role === 'instructor'
+              ? 'Instructors cannot enroll in courses. Please sign in with a student account to enroll in courses.'
+              : 'You need to enroll in this course before you can start learning.'}
           </p>
           <button
             className='lms-btn lms-btn--primary'

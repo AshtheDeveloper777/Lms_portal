@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Play, CheckCircle2, Maximize, AlertCircle } from 'lucide-react';
+import { Play, CheckCircle2, Maximize, AlertCircle, BookOpen } from 'lucide-react';
 
 type VideoPlayerProps = {
   url: string | null | undefined;
@@ -214,8 +214,8 @@ export default function VideoPlayer({
               padding: 24,
             }}
           >
-            <Play size={40} style={{ color: 'var(--accent)', marginBottom: 12 }} />
-            <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Watch Lesson Video</p>
+            <BookOpen size={40} style={{ color: 'var(--accent)', marginBottom: 12 }} />
+            <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Read Documentation</p>
             <a
               href={url}
               target='_blank'
@@ -223,7 +223,7 @@ export default function VideoPlayer({
               className='lms-btn lms-btn--primary'
               style={{ fontSize: 13 }}
             >
-              Open External Video
+              Read Documentation
             </a>
           </div>
         )}

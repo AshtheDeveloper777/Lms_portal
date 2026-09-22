@@ -223,7 +223,7 @@ export default function ProfilePage() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14, color: "var(--text-muted)" }}>
                   <Calendar size={13} />
-                  Member since{" "}
+                  {isInstructor ? "Instructor since " : "Student since "}
                   {isInstructor
                     ? instructorQuery.data?.profile?.created_at
                       ? new Date(instructorQuery.data.profile.created_at).toLocaleDateString("en-IN", { month: "long", year: "numeric" })
@@ -246,21 +246,11 @@ export default function ProfilePage() {
         {/* Student View with Rich Progress in Percentage */}
         {!isLoading && !isInstructor && studentQuery.data && (
           <>
-            <div className="lms-stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", marginBottom: 28 }}>
+            <div className="lms-stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 280px))", marginBottom: 28 }}>
               <div className="lms-stat-card">
                 <div className="lms-stat-icon"><BookOpen size={18} /></div>
                 <p className="lms-stat-label">Enrolled Courses</p>
                 <p className="lms-stat-value">{studentQuery.data.enrolledCourses.length}</p>
-              </div>
-              <div className="lms-stat-card">
-                <div className="lms-stat-icon" style={{ background: "var(--green-bg)", color: "var(--green)" }}><CheckCircle size={18} /></div>
-                <p className="lms-stat-label">Lessons Done</p>
-                <p className="lms-stat-value">{studentQuery.data.totalCompleted}</p>
-              </div>
-              <div className="lms-stat-card">
-                <div className="lms-stat-icon" style={{ background: "var(--purple-bg)", color: "var(--purple)" }}><TrendingUp size={18} /></div>
-                <p className="lms-stat-label">Average Progress</p>
-                <p className="lms-stat-value">{studentQuery.data.overallProgress}%</p>
               </div>
             </div>
 

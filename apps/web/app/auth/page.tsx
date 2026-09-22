@@ -1,7 +1,7 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { FormEvent, useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { GraduationCap, Eye, EyeOff } from 'lucide-react';
 import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
@@ -12,11 +12,13 @@ import { Card, CardContent } from '@/components/ui/card';
 
 const emailSchema = z.string().trim().email('Please enter a valid email address.');
 
-export default function AuthPage() {
+function AuthForm() {
   const router = useRouter();
   const { setUser } = useAuthStore();
+  const searchParams = useSearchParams();
+  const modeParam = searchParams.get('mode') || searchParams.get('tab');
 
-  const [isLogin, setIsLogin] = useState(true);
+  const [isLogin, setIsLogin] = useState(modeParam !== 'signup');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,6 +26,22 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    if (modeParam === 'signup') {
+      setIsLogin(false);
+    } else if (modeParam === 'login') {
+      setIsLogin(true);
+    }
+  }, [modeParam]);
+
+  const switchTab = (toLogin: boolean) => {
+    setIsLogin(toLogin);
+    setError('');
+    setSuccess('');
+    const newUrl = toLogin ? '/auth?mode=login' : '/auth?mode=signup';
+    window.history.replaceState(null, '', newUrl);
+  };
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -47,62 +65,46 @@ export default function AuthPage() {
 
         if (loginError) {
           setError(loginError.message);
-          setLoading(false);
           return;
         }
 
         if (!data.user) {
-          setError('Login failed. Please check your credentials.');
-          setLoading(false);
+          setError('Could not sign in with these credentials.');
           return;
         }
 
-        let userRole: 'student' | 'instructor' = 'student';
-        let userFullName = data.user.user_metadata?.full_name || email.split('@')[0];
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name, role')
+          .eq('id', data.user.id)
+          .single();
 
-        try {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('role, full_name')
-            .eq('id', data.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            userRole = (profile.role as 'student' | 'instructor') || 'student';
-            if (profile.full_name) userFullName = profile.full_name;
-          } else {
-            const defaultRole = (data.user.user_metadata?.role as 'student' | 'instructor') || 'student';
-            await supabase.from('profiles').upsert({
-              id: data.user.id,
-              full_name: userFullName,
-              email: data.user.email,
-              role: defaultRole,
-            });
-            userRole = defaultRole;
-          }
-        } catch {
-          userRole = (data.user.user_metadata?.role as 'student' | 'instructor') || 'student';
-        }
+        const userRole = (profile?.role || (data.user.user_metadata?.role as string) || 'student') as
+          | 'student'
+          | 'instructor';
 
         setUser({
           userId: data.user.id,
-          fullName: userFullName,
-          email: data.user.email ?? null,
+          fullName: profile?.full_name || (data.user.user_metadata?.full_name as string) || '',
+          email: data.user.email || emailResult.data,
           role: userRole,
         });
 
-        router.push(userRole === 'instructor' ? '/instructor' : '/courses');
+        if (userRole === 'instructor') {
+          router.push('/instructor');
+        } else {
+          router.push('/courses');
+        }
         return;
       }
 
-      // SIGN UP (Always creates student account; instructors assigned in DB)
       if (!fullName.trim()) {
-        setError('Full name is required.');
+        setError('Please enter your full name.');
         setLoading(false);
         return;
       }
 
-      const { data, error: signupError } = await supabase.auth.signUp({
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email: emailResult.data,
         password,
         options: {
@@ -113,28 +115,12 @@ export default function AuthPage() {
         },
       });
 
-      if (signupError) {
-        setError(signupError.message);
-        setLoading(false);
+      if (signUpError) {
+        setError(signUpError.message);
         return;
       }
 
-      if (!data.user) {
-        setError('Signup failed.');
-        setLoading(false);
-        return;
-      }
-
-      if (data.session) {
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            full_name: fullName.trim(),
-            email: emailResult.data,
-            role: 'student',
-          });
-        } catch {}
-
+      if (data.session && data.user) {
         setUser({
           userId: data.user.id,
           fullName: fullName.trim(),
@@ -231,11 +217,7 @@ export default function AuthPage() {
             >
               <button
                 type='button'
-                onClick={() => {
-                  setIsLogin(true);
-                  setError('');
-                  setSuccess('');
-                }}
+                onClick={() => switchTab(true)}
                 style={{
                   padding: '8px 14px',
                   borderRadius: 6,
@@ -253,11 +235,7 @@ export default function AuthPage() {
               </button>
               <button
                 type='button'
-                onClick={() => {
-                  setIsLogin(false);
-                  setError('');
-                  setSuccess('');
-                }}
+                onClick={() => switchTab(false)}
                 style={{
                   padding: '8px 14px',
                   borderRadius: 6,
@@ -373,5 +351,27 @@ export default function AuthPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            minHeight: 'calc(100vh - 60px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text-muted)',
+          }}
+        >
+          Loading...
+        </div>
+      }
+    >
+      <AuthForm />
+    </Suspense>
   );
 }

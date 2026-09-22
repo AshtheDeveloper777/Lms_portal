@@ -15,6 +15,7 @@ type Course = {
   category: string | null;
   thumbnail_url: string | null;
   published: boolean;
+  instructor_id?: string;
 };
 
 type Lesson = {
@@ -27,7 +28,7 @@ type Lesson = {
 async function fetchCourseData(courseId: string, userId: string | null) {
   const { data: course, error: courseError } = await supabase
     .from("courses")
-    .select("id, title, description, category, thumbnail_url, published")
+    .select("id, title, description, category, thumbnail_url, published, instructor_id")
     .eq("id", courseId)
     .maybeSingle();
 
@@ -58,7 +59,7 @@ export default function CourseDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const courseId = params.id as string;
-  const { userId } = useAuthStore();
+  const { userId, role } = useAuthStore();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["course-detail", courseId, userId],
@@ -71,7 +72,10 @@ export default function CourseDetailPage() {
   const enrollMutation = useMutation({
     mutationFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { router.push("/auth"); throw new Error("Not authenticated"); }
+      if (!user) { router.push("/auth?mode=login"); throw new Error("Not authenticated"); }
+      if (role === "instructor") {
+        throw new Error("Instructors cannot enroll in courses. Please sign in with a student account to enroll.");
+      }
       const { error } = await supabase.from("enrollments").insert({ student_id: user.id, course_id: courseId });
       if (error) throw new Error(error.message);
     },
@@ -141,7 +145,19 @@ export default function CourseDetailPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               {!isEnrolled ? (
                 !userId ? (
-                  <Link href="/auth" className="lms-btn lms-btn--primary lms-btn--lg">Sign in to Enroll</Link>
+                  <Link href="/auth?mode=signup" className="lms-btn lms-btn--primary lms-btn--lg">Sign in to Enroll</Link>
+                ) : role === "instructor" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    {course.instructor_id === userId ? (
+                      <Link href={"/instructor/courses/" + courseId} className="lms-btn lms-btn--primary lms-btn--lg">
+                        Manage Your Course
+                      </Link>
+                    ) : (
+                      <Link href="/courses" className="lms-btn lms-btn--outline lms-btn--lg">
+                        Browse Other Courses
+                      </Link>
+                    )}
+                  </div>
                 ) : (
                   <button className="lms-btn lms-btn--primary lms-btn--lg" onClick={() => enrollMutation.mutate()} disabled={enrollMutation.isPending}>
                     {enrollMutation.isPending ? "Enrolling..." : "Enroll Now — Free"}
