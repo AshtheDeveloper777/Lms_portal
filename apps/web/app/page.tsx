@@ -283,37 +283,7 @@ export default function Home() {
               </p>
             </div>
 
-            <div
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-lg)',
-                padding: 32,
-                boxShadow: 'var(--shadow-card)',
-              }}
-            >
-              <div
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 'var(--radius-md)',
-                  background: 'var(--green-bg)',
-                  color: 'var(--green)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: 20,
-                }}
-              >
-                <CheckCircle2 size={24} />
-              </div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
-                Automatic Watch Tracking
-              </h3>
-              <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                Lessons automatically mark as completed when you finish watching the video, updating your progress across all devices.
-              </p>
-            </div>
+
 
             <div
               style={{

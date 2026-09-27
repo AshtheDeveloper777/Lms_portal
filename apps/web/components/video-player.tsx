@@ -258,11 +258,7 @@ export default function VideoPlayer({
             >
               <CheckCircle2 size={13} /> Completed
             </span>
-          ) : (
-            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-              Watching will automatically mark this lesson completed when finished.
-            </span>
-          )}
+          ) : null}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
