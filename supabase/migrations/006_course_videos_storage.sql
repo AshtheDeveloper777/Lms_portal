@@ -1,16 +1,16 @@
--- ===========================================================================
-+-- STORAGE
-BUCKET: course-videos
--- ===========================================================================
+-- =============================================================================
+-- STORAGE BUCKET: course-videos
+-- =============================================================================
 
 insert into storage.buckets (id, name, public)
 values ('course-videos', 'course-videos', true)
 on conflict (id) do nothing;
 
 drop policy if exists "Authenticated users can upload course videos" on storage.objects;
-drop policy if exists "Public can view course videos"            on storage.objects;
+drop policy if exists "Public can view course videos"                on storage.objects;
 drop policy if exists "Users can update own course videos"           on storage.objects;
 drop policy if exists "Users can delete own course videos"           on storage.objects;
+drop policy if exists "Users can delete own course-videos"          on storage.objects;
 
 create policy "Authenticated users can upload course videos"
   on storage.objects for insert
