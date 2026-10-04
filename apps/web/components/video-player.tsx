@@ -28,7 +28,7 @@ function getVimeoId(url: string): string | null {
 }
 
 function isDirectVideo(url: string): boolean {
-  return /\.(mp4|webm|ogg|mov)(\?|$)/i.test(url);
+  return /\.(mp4|webm|ogg|mov)(\?|$)/i.test(url) || url.includes('/storage/v1/object/public/');
 }
 
 export default function VideoPlayer({
@@ -175,6 +175,8 @@ export default function VideoPlayer({
           <video
             src={url}
             controls
+            playsInline
+            preload="metadata"
             title={title}
             onEnded={handleVideoCompleted}
             onTimeUpdate={(e) => {

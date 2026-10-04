@@ -82,7 +82,8 @@ export default function CourseDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["course-detail", courseId, userId] });
       queryClient.invalidateQueries({ queryKey: ["my-learning", userId] });
-      router.push("/courses/" + courseId + "/learn");
+      const firstLessonId = data?.lessons?.[0]?.id;
+      router.push(firstLessonId ? `/courses/${courseId}/${firstLessonId}` : `/courses/${courseId}/learn`);
     },
   });
 
@@ -165,7 +166,7 @@ export default function CourseDetailPage() {
                 )
               ) : (
                 <>
-                  <Link href={`/courses/${course.id}/learn`} className="lms-btn lms-btn--primary lms-btn--lg">Start Learning →</Link>
+                  <Link href={lessons[0]?.id ? `/courses/${course.id}/${lessons[0].id}` : `/courses/${course.id}/learn`} className="lms-btn lms-btn--primary lms-btn--lg">Start Learning →</Link>
                   <span className="lms-badge lms-badge--green" style={{ padding: "8px 16px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
                     <CheckCircle size={14} />Enrolled
                   </span>

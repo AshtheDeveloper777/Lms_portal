@@ -31,18 +31,26 @@ async function fetchInstructorData(userId: string) {
   const courseIds = (courses ?? []).map((c: { id: string }) => c.id);
 
   let totalEnrollments = 0;
+  let totalStudents = 0;
   const countMap: Record<string, number> = {};
 
   if (courseIds.length > 0) {
     const { data: enrollments } = await supabase
       .from("enrollments")
-      .select("course_id")
+      .select("course_id, student_id")
       .in("course_id", courseIds);
 
-    (enrollments ?? []).forEach((e: { course_id: string }) => {
+    const uniqueStudentIds = new Set<string>();
+
+    (enrollments ?? []).forEach((e: { course_id: string; student_id: string }) => {
       countMap[e.course_id] = (countMap[e.course_id] || 0) + 1;
+      if (e.student_id) {
+        uniqueStudentIds.add(e.student_id);
+      }
     });
+
     totalEnrollments = enrollments?.length ?? 0;
+    totalStudents = uniqueStudentIds.size;
   }
 
   const coursesWithCounts: Course[] = (courses ?? []).map((c: any) => ({
@@ -50,7 +58,7 @@ async function fetchInstructorData(userId: string) {
     student_count: countMap[c.id] || 0,
   }));
 
-  return { courses: coursesWithCounts, totalEnrollments };
+  return { courses: coursesWithCounts, totalStudents, totalEnrollments };
 }
 
 export default function InstructorDashboard() {
@@ -73,7 +81,7 @@ export default function InstructorDashboard() {
   useRealtimeInvalidate("enrollments", [["instructor-dashboard", userId]]);
 
   const courses = data?.courses ?? [];
-  const totalEnrollments = data?.totalEnrollments ?? 0;
+  const totalStudents = data?.totalStudents ?? 0;
   const publishedCount = courses.filter((c: Course) => c.published).length;
 
   async function togglePublish(courseId: string, current: boolean) {
@@ -124,7 +132,7 @@ export default function InstructorDashboard() {
           <div className="lms-stat-card">
             <div className="lms-stat-icon" style={{ background: "var(--purple-bg)", color: "var(--purple)" }}><Users size={20} /></div>
             <p className="lms-stat-label">Total Students</p>
-            <p className="lms-stat-value">{totalEnrollments}</p>
+            <p className="lms-stat-value">{totalStudents}</p>
           </div>
           <div className="lms-stat-card">
             <div className="lms-stat-icon" style={{ background: "var(--yellow-bg)", color: "var(--yellow)" }}><TrendingUp size={20} /></div>
