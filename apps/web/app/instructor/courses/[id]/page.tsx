@@ -181,7 +181,7 @@ export default function ManageLessonsPage() {
     try {
       // If a video file is selected, upload to Supabase storage bucket 'course-videos'
       if (videoFile) {
-        setUploadStatus("Uploading video to 'course-videos' bucket...");
+        setUploadStatus("Uploading video...");
         const fileExt = videoFile.name.split(".").pop() || "mp4";
         const sanitizedExt = fileExt.toLowerCase().replace(/[^a-z0-9]/g, "");
         const fileName = `${courseId}/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${sanitizedExt}`;
@@ -309,7 +309,7 @@ export default function ManageLessonsPage() {
             {editingLessonId ? "Edit Lesson" : "Add New Lesson"}
           </h2>
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 24 }}>
-            Fill in lesson details, upload a video file to the <strong>course-videos</strong> storage bucket, or paste an external video link.
+            Fill in lesson details, upload a video file, or paste a video link.
           </p>
 
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -340,7 +340,7 @@ export default function ManageLessonsPage() {
             <div>
               <label className="lms-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Video size={16} style={{ color: "var(--accent-hover)" }} />
-                Upload Lesson Video (Storage Bucket: <code>course-videos</code>)
+                Upload Lesson Video
               </label>
 
               <div
@@ -384,7 +384,7 @@ export default function ManageLessonsPage() {
                       <span style={{ fontSize: 13, color: "var(--text-muted)" }}> or drag & drop</span>
                     </div>
                     <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
-                      MP4, WebM, MOV up to 500MB (uploaded directly to Supabase storage)
+                      MP4, WebM, MOV up to 500MB
                     </p>
                     <input
                       type="file"
@@ -436,7 +436,7 @@ export default function ManageLessonsPage() {
             </div>
 
             <div>
-              <label className="lms-label">Or Video URL (Direct link / YouTube / Vimeo / Supabase Storage)</label>
+              <label className="lms-label">Or Video URL (YouTube, Vimeo, or Direct link)</label>
               <input
                 className="lms-input"
                 type="url"
@@ -445,7 +445,7 @@ export default function ManageLessonsPage() {
                 placeholder="https://..."
               />
               <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
-                If a file is selected above, it will be uploaded to <code>course-videos</code> bucket and its public URL saved to <code>video_url</code> column.
+                Optional: You can paste a link instead of uploading a video file.
               </p>
             </div>
 
