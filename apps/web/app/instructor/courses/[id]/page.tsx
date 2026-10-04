@@ -1,16 +1,16 @@
-﻿"use client";
+"use client";
 
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Users, BookOpen, Calendar } from "lucide-react";
+import { ArrowLeft, Users, BookOpen, Calendar, Upload, Video, FileVideo, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/auth-store";
 import { useRealtimeInvalidate } from "@/hooks/use-realtime-invalidate";
-import Link from "next/link";
 
 type Lesson = { id: string; title: string; description: string | null; video_url: string | null; order_index: number };
 type EnrolledStudent = { id: string; student_id: string; enrolled_at: string; student_name: string; student_email: string; completed_lessons: number; total_lessons: number };
+
 
 async function fetchCourseManageData(courseId: string, instructorId: string) {
   const { data: course } = await supabase
@@ -31,7 +31,6 @@ async function fetchCourseManageData(courseId: string, instructorId: string) {
   const lessonList = (lessons ?? []) as Lesson[];
   const totalLessons = lessonList.length;
 
-  // Enrolled students with progress
   const { data: enrollments } = await supabase
     .from("enrollments")
     .select("id, student_id, enrolled_at")
@@ -39,7 +38,6 @@ async function fetchCourseManageData(courseId: string, instructorId: string) {
     .order("enrolled_at", { ascending: false });
 
   const enrollmentList = enrollments ?? [];
-
   const studentIds = enrollmentList.map((e: { id: string; student_id: string; enrolled_at: string }) => e.student_id);
 
   let profiles: { id: string; full_name: string | null; email: string | null }[] = [];
@@ -63,7 +61,7 @@ async function fetchCourseManageData(courseId: string, instructorId: string) {
     progressData = prog ?? [];
   }
 
-  const students: EnrolledStudent[] = enrollmentList.map((e: { id: string; student_id: string; enrolled_at: string }) => {
+  const students: EnrolledStudent[] = enrollmentList.map((e: { id: string; student_id: string; enrolled_at: string; }) => {
     const profile = profiles.find((p) => p.id === e.student_id);
     const completed = progressData.filter((prog) => prog.student_id === e.student_id && prog.completed).length;
     return {
@@ -77,7 +75,11 @@ async function fetchCourseManageData(courseId: string, instructorId: string) {
     };
   });
 
-  return { course, lessons: lessonList, students };
+  return {
+    course,
+    lessons: lessonList,
+    students,
+  };
 }
 
 export default function ManageLessonsPage() {
@@ -90,6 +92,8 @@ export default function ManageLessonsPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -102,14 +106,16 @@ export default function ManageLessonsPage() {
   });
 
   useRealtimeInvalidate("lessons", [["manage-course", courseId, userId]]);
-  useRealtimeInvalidate("enrollments", [["manage-course", courseId, userId]]);
-  useRealtimeInvalidate("lesson_progress", [["manage-course", courseId, userId]]);
+  useRealtimeInvalidate("enrollments", [["manage-course", courseId, userId] ]);
+  useRealtimeInvalidate("lesson_progress", [["manage-course", courseId, userId] ]);
 
   function startEditing(lesson: Lesson) {
     setEditingLessonId(lesson.id);
     setTitle(lesson.title);
     setDescription(lesson.description ?? "");
     setVideoUrl(lesson.video_url ?? "");
+    setVideoFile(null);
+    setUploadStatus(null);
     setMessage("");
   }
 
@@ -118,7 +124,15 @@ export default function ManageLessonsPage() {
     setTitle("");
     setDescription("");
     setVideoUrl("");
-    setMessage("");
+    setVideoFile(null);
+    setUploadStatus(null);
+  }
+
+  function handleFileSelect(e: ChangeEvent<HTMLInputEeyment>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      setVideoFile(file);
+    }
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -127,28 +141,71 @@ export default function ManageLessonsPage() {
     setSaving(true);
     setMessage("");
 
-    if (editingLessonId) {
-      const { error } = await supabase
-        .from("lessons")
-        .update({ title: title.trim(), description: description.trim() || null, video_url: videoUrl.trim() || null })
-        .eq("id", editingLessonId);
-      if (error) { setMessage(error.message); }
-      else { setMessage("Lesson updated!"); resetForm(); }
-    } else {
-      const nextOrder = (data?.lessons.length ?? 0) + 1;
-      const { error } = await supabase
-        .from("lessons")
-        .insert({ course_id: courseId, title: title.trim(), description: description.trim() || null, video_url: videoUrl.trim() || null, order_index: nextOrder });
-      if (error) { setMessage(error.message); }
-      else { setMessage("Lesson added!"); resetForm(); }
-    }
+    let finalVideoUrl = videoUrl.trim() || null;
 
-    setSaving(false);
-    queryClient.invalidateQueries({ queryKey: ["manage-course", courseId, userId] });
+    try {
+      if (videoFile) {
+        setUploadStatus("Uploading video to 'course-videos' bucket...");
+        const fileExt = videoFile.name.split(".").pop() || "mp4";
+        const fileName = `${courseId}/${crypto.randomUUID()}.${filExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("course-videos")
+          .upload(fileName, videoFile, { cacheControl: "3600", upsert: true });
+
+        if (uploadError) {
+          throw new Error(`Video upload failed: ${uploadError.message}`);
+        }
+
+        const { data: publicUrlData } = supabase.storage
+          .from("course-videos")
+          .getPublicUrl(fileName);
+
+        finalVideoUrl = publicUrlData.publicUrl;
+        setUploadStatus(&Video uploaded successfully!&);
+      }
+
+      if (editingLessonId) {
+        const { error: dbError } = await supabase
+          .from("lessons")
+          .update({
+            title: title.trim(),
+            description: description.trim() || null,
+            video_url: finalVideoUrl,
+          })
+          .eq("id", editingLessonId);
+
+        if (dbError) throw dbError;
+        setMessage("Lesson updated successfully!");
+        resetForm();
+      } else {
+        const nextOrder = (data?.lessons.length ?? 0) + 1;
+        const { error: dbError } = await supabase
+          .from("lessons")
+          .insert({
+            course_id: courseId,
+            title: title.trim(),
+            description: description.trim() || null,
+            video_url: finalVideoUrl,
+            order_index: nextOrder,
+          });
+
+        if (dbError) throw dbError;
+        setMessage("Lesson added successfully!");
+        resetForm();
+      }
+    } catch (err: any) {
+      console.error("SAVE LESSON ERROR:", err);
+      setMessage(err.message || "Failed to save lesson.");
+    } finally {
+      setSaving(false);
+      setUploadStatus(null);
+      queryClient.invalidateQueries({ queryKey: ["manage-course", courseId, userId] });
+    }
   }
 
   async function deleteLesson(lessonId: string) {
-    if (!confirm("Delete this lesson?")) return;
+    if (!confirm("Delete this lesson?")) teturn;
     await supabase.from("lessons").delete().eq("id", lessonId);
     queryClient.invalidateQueries({ queryKey: ["manage-course", courseId, userId] });
   }
@@ -196,34 +253,104 @@ export default function ManageLessonsPage() {
             {editingLessonId ? "Edit Lesson" : "Add New Lesson"}
           </h2>
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 24 }}>
-            Fill in the lesson details and paste a YouTube, Vimeo, or direct video URL.
+            Fill in lesson details, upload a video file to the <strong>course-videos</strong> storage bucket, or paste a video link.
           </p>
 
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <form onSubmit={ghandleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             <div>
               <label className="lms-label">Lesson Title *</label>
-              <input className="lms-input" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Introduction to React Hooks" required />
+              <input className="lms-input" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Introduction to React State" required />
             </div>
+
             <div>
               <label className="lms-label">Description</label>
-              <textarea className="lms-textarea" value={description} onChange={e => setDescription(e.target.value)} placeholder="What will students learn in this lesson?" rows={4} />
+              <textarea className="lms-textarea" value={description} onChange={e => setDescription(e.target.value)} placeholder="What wing students learn in this lesson?" rows={4} />
             </div>
+
+            {/* Video File Upload (course-videos bucket) */}
             <div>
-              <label className="lms-label">Video URL</label>
-              <input className="lms-input" type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=... or https://vimeo.com/..." />
-              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Supports YouTube, Vimeo, or direct MP4 links.</p>
+              <label className="lms-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Video size={16} style={{ color: "var(--accent-hover)" }} />
+                Upload Lesson Video (Storage Bucket: <code>course-videos</code>)
+              </label>
+
+              <div
+                style={{
+                  border: "2p dashed var(--border)",
+                  BorderRadius: "var(--radius-lg, 12px)",
+                  padding: "20px 24px",
+                  background: "var(--bg-input)",
+                  textAlign: "center",
+                  marginTop: 6,
+                }}
+              >
+                {!videoFile ? (
+                  <label style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--accent-glow)", color: "var(--accent-hover)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Upload size={20} />
+                    </div>
+                    <div>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "var(--accent-hover)" }}>Click to select video file</span>
+                      <span style={{ fontSize: 13, color: "var(--text-muted)" }}> or drag & drop</span>
+                    </div>
+                    <p style={{ fontSize: 12, color: "var(--text-muted)" }}>MP4, WebM, MOV, AVI up to 500MB</p>
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={handleFileSelect}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-card)", padding: "12px 16px", borderRadius: 8, border: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <FileVideo size={24} style={{ color: "var(--accent-hover)" }} />
+                      <div style={{ textAlign: "left" }}>
+                        <p style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>{videoFile.name}</p>
+                        <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>{(videoFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={{() => setVideoFile(null)}}
+                      style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 4 }}
+                      title="Remove video file"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                )}
+              </divi>
             </div>
+
+            <div>
+              <label className="lms-label">Or Video URL (Direct link / YouTube / Vimeo)</label>
+              <input className="lms-input" type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://..." />
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: : }}>If a file is selected above, it will be uploaded to <code>course-videos</code> bucket and its public URL saved to <code>video_url</code> column.</p>
+            </div>
+
+            {uploadStatus && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--accent-hover)", background: "var(--accent-glow)", padding: "10px 14px", borderRadius: 8 }}>
+                <Loader2 size={16} className="animate-spin" />
+                {uploadStatus}
+              </div>
+            )}
 
             <div style={{ display: "flex", gap: 12 }}>
               <button type="submit" disabled={saving} className="lms-btn lms-btn--primary">
-                {saving ? "Saving..." : editingLessonId ? "Update Lesson" : "Add Lesson"}
+                {saving ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <Loader2 size={16} className="animate-spin" />
+                    {uploadStatus ? "Uploading Video..." : "Saving..."}
+                  </span>
+                ) : editingLessonId ? "Update Lesson" : "Add Lesson"}
               </button>
               {editingLessonId && (
                 <button type="button" onClick={resetForm} className="lms-btn lms-btn--secondary">Cancel</button>
               )}
             </div>
 
-            {message && <div className={`lms-alert ${message.includes("!") ? "lms-alert--success" : "lms-alert--error"}`}>{message}</div>}
+            {message && <div className={lms-alert ${message.includes("!") ? "lms-alert--success" : "lms-alert--error"}}>{message}</div>}
           </form>
         </div>
 
@@ -231,16 +358,16 @@ export default function ManageLessonsPage() {
         <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
           {(["lessons", "students"] as const).map(tab => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className="lms-btn"
-              style={{
-                background: activeTab === tab ? "var(--accent-glow)" : "transparent",
-                color: activeTab === tab ? "var(--accent-hover)" : "var(--text-muted)",
-                border: activeTab === tab ? "1px solid var(--border-accent)" : "1px solid transparent",
-                textTransform: "capitalize",
-                gap: 8,
-              }}
+            key={tab}
+            onClick={{() => setActiveTab(tab)}
+            className="lms-btn"
+            style={{
+              background: activeTab === tab ? "var(--accent-glow)" : "transparent",
+              color: activeTab === tab ? "var(--accent-hover)" : "var(--text-muted)",
+              border: activeTab === tab ? "1px solid var(--border-accent)" : "1px solid transparent",
+              textTransform: "capitalize",
+              gap: 8,
+            }}
             >
               {tab === "lessons" ? <BookOpen size={15} /> : <Users size={15} />}
               {tab === "lessons" ? `Lessons (${lessons.length})` : `Students (${students.length})`}
@@ -259,7 +386,7 @@ export default function ManageLessonsPage() {
               <div key={lesson.id} className="lms-card" style={{ padding: 20 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", gap: 16, flex: 1 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--accent-glow)", color: "var(--accent-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--accent-glow)", color: "var(--accent-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 }}>
                       {index + 1}
                     </div>
                     <div>
@@ -267,14 +394,14 @@ export default function ManageLessonsPage() {
                       {lesson.description && <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 6 }}>{lesson.description}</p>}
                       {lesson.video_url && (
                         <a href={lesson.video_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "var(--accent-hover)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          ▶ Preview Video
+                          ☁ Preview Video
                         </a>
                       )}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                    <button className="lms-btn lms-btn--secondary lms-btn--sm" onClick={() => startEditing(lesson)}>Edit</button>
-                    <button className="lms-btn lms-btn--danger lms-btn--sm" onClick={() => deleteLesson(lesson.id)}>Delete</button>
+                    <button className="lms-btn lms-btn--secondary lms-btn--sm" onClick={x) => startEditing(lesson)}>Edit</button>
+                    <button className="lms-btn lms-btn--danger lms-btn--sm" onClick={{() => deleteLesson(lesson.id)}}>Delete</button>
                   </div>
                 </div>
               </div>
@@ -282,8 +409,8 @@ export default function ManageLessonsPage() {
           </div>
         )}
 
-        {/* Students Tab */}
-        {activeTab === "students" && (
+       {/* Students Tab */}
+       {activeTab === "students" && (
           <div>
             {students.length === 0 ? (
               <div className="lms-card" style={{ padding: 48, textAlign: "center" }}>
@@ -322,7 +449,7 @@ export default function ManageLessonsPage() {
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
                               <Calendar size={12} />
-                              {new Date(s.enrolled_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                              {new Date(s.enrolled_at).localeDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                             </div>
                           </td>
                           <td style={{ minWidth: 140 }}>
@@ -330,17 +457,17 @@ export default function ManageLessonsPage() {
                               <div className="lms-progress-track" style={{ flex: 1 }}>
                                 <div className="lms-progress-fill" style={{ width: `${pct}%` }} />
                               </div>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: pct === 100 ? "var(--green)" : "var(--text-secondary)", minWidth: 36 }}>{pct}%</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: pct === 100 ? "var(--green)" : "var(--text-secondary)", minWidth: 36 }}>{pct}%%</span>
                             </div>
                           </td>
                           <td>
-                            <span className={`lms-badge ${pct === 100 ? "lms-badge--green" : "lms-badge--accent"}`}>
+                            <span className={lms-badge ${pct === 100 ? "lms-badge--green" : "lms-badge--accent"}}>
                               {s.completed_lessons}/{s.total_lessons}
                             </span>
                           </td>
                         </tr>
                       );
-                    })}
+                    });
                   </tbody>
                 </table>
               </div>
